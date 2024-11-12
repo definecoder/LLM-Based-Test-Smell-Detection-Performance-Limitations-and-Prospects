@@ -1,0 +1,215 @@
+test_method,isRedundent
+"@Test
+  public void testInvalidSplitKey() throws Exception {
+    final TableName tableName = TableName.valueOf(name.getMethodName());
+    final ProcedureExecutor<MasterProcedureEnv> procExec = getMasterProcedureExecutor();
+
+    RegionInfo[] regions = MasterProcedureTestingUtility.createTable(procExec, tableName, null,
+      columnFamilyName1, columnFamilyName2);
+    insertData(UTIL, tableName, rowCount, startRowNum, columnFamilyName1, columnFamilyName2);
+
+    assertTrue(""not able to find a splittable region"", regions != null);
+    assertTrue(""not able to find a splittable region"", regions.length == 1);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    // Split region of the table with null split key
+    try {
+      long procId1 = procExec.submitProcedure(
+        new SplitTableRegionProcedure(procExec.getEnvironment(), regions[0], null));
+      ProcedureTestingUtility.waitProcedure(procExec, procId1);
+      fail(""unexpected procedure start with invalid split-key"");
+    }",1
+"@Test
+  public void testRecoveryAndDoubleExecution() throws Exception {
+    final TableName tableName = TableName.valueOf(name.getMethodName());
+    final ProcedureExecutor<MasterProcedureEnv> procExec = getMasterProcedureExecutor();
+
+    RegionInfo[] regions = MasterProcedureTestingUtility.createTable(procExec, tableName, null,
+      columnFamilyName1, columnFamilyName2);
+    insertData(UTIL, tableName, rowCount, startRowNum, columnFamilyName1, columnFamilyName2);
+    int splitRowNum = startRowNum + rowCount / 2;
+    byte[] splitKey = Bytes.toBytes("""" + splitRowNum);
+
+    assertTrue(""not able to find a splittable region"", regions != null);
+    assertTrue(""not able to find a splittable region"", regions.length == 1);
+    ProcedureTestingUtility.waitNoProcedureRunning(procExec);
+    ProcedureTestingUtility.setKillIfHasParent(procExec, false);
+    ProcedureTestingUtility.setKillAndToggleBeforeStoreUpdate(procExec, true);
+
+    // collect AM metrics before test
+    collectAssignmentManagerMetrics();
+
+    // Split region of the table
+    long procId = procExec.submitProcedure(
+      new SplitTableRegionProcedure(procExec.getEnvironment(), regions[0], splitKey));
+
+    // Restart the executor and execute the step twice
+    MasterProcedureTestingUtility.testRecoveryAndDoubleExecution(procExec, procId);
+    ProcedureTestingUtility.assertProcNotFailed(procExec, procId);
+
+    verify(tableName, splitRowNum);
+
+    assertEquals(splitSubmittedCount + 1, splitProcMetrics.getSubmittedCounter().getCount());
+    assertEquals(splitFailedCount, splitProcMetrics.getFailedCounter().getCount());
+  }",1
+"@Test
+  public void testSplitWithoutPONR() throws Exception {
+    final TableName tableName = TableName.valueOf(name.getMethodName());
+    final ProcedureExecutor<MasterProcedureEnv> procExec = getMasterProcedureExecutor();
+
+    RegionInfo[] regions = MasterProcedureTestingUtility.createTable(procExec, tableName, null,
+      columnFamilyName1, columnFamilyName2);
+    insertData(UTIL, tableName, rowCount, startRowNum, columnFamilyName1, columnFamilyName2);
+    int splitRowNum = startRowNum + rowCount / 2;
+    byte[] splitKey = Bytes.toBytes("""" + splitRowNum);
+
+    assertTrue(""not able to find a splittable region"", regions != null);
+    assertTrue(""not able to find a splittable region"", regions.length == 1);
+    ProcedureTestingUtility.waitNoProcedureRunning(procExec);
+    ProcedureTestingUtility.setKillAndToggleBeforeStoreUpdate(procExec, true);
+
+    // Split region of the table
+    long procId = procExec.submitProcedure(
+      new SplitTableRegionProcedure(procExec.getEnvironment(), regions[0], splitKey));
+
+    // Execute until step 7 of split procedure
+    // NOTE: the 7 (number after SPLIT_TABLE_REGION_UPDATE_META step)
+    MasterProcedureTestingUtility.testRecoveryAndDoubleExecution(procExec, procId, 7, false);
+
+    // Unset Toggle Kill and make ProcExec work correctly
+    ProcedureTestingUtility.setKillAndToggleBeforeStoreUpdate(procExec, false);
+    MasterProcedureTestingUtility.restartMasterProcedureExecutor(procExec);
+    ProcedureTestingUtility.waitProcedure(procExec, procId);
+
+    // Even split failed after step 4, it should still works fine
+    verify(tableName, splitRowNum);
+  }",1
+"@Test
+  public void testOfferInStealQueueFromShouldUnblock() throws InterruptedException {
+    final AtomicInteger taken = new AtomicInteger();
+    Thread consumer = new Thread() {
+      @Override
+      public void run() {
+        try {
+          Integer n = stealJobQueue.take();
+          taken.set(n);
+        }",1
+"@Test
+	public void testHead_noInput_1() {
+		final MultilineString expectedOutput = new MultilineString();
+		assertHead(MultilineString.EMPTY, 1, expectedOutput);
+	}",1
+"@Test
+    public void testMiddleOfInheritanceExclusion1() throws Exception {
+        // given
+        String propertyName = ""fooLogic"";
+        Member member = FooBar.class.getMethod(propertyName);
+
+        sma.useExcludedClasses(BarInterface.class.getName());
+
+        // when
+        boolean accessible = sma.isAccessible(context, target, member, propertyName);
+
+        // then
+        assertTrue(""fooLogic() from FooInterface isn't accessible!!!"", accessible);
+    }",1
+"@Test
+  public void verifyMonitorPropagatesImagePullFailed() throws Exception {
+    sut.failed(new ImagePullFailedException(""foobar"", ""failure""), ""container error"");
+    verify(statusUpdater).setThrottleState(IMAGE_PULL_FAILED);
+    verify(statusUpdater).setState(FAILED);
+    verify(statusUpdater).setContainerError(""container error"");
+    verify(statusUpdater).update();
+  }",1
+"@Test
+    public void testFindBeanManager() {
+        assertNotNull(new CdiObjectFactory().findBeanManager());
+    }",1
+"@Test
+    public void testGetBean() throws Exception {
+        final CdiObjectFactory cdiObjectFactory = new CdiObjectFactory();
+        FooConsumer fooConsumer = (FooConsumer) cdiObjectFactory.buildBean(FooConsumer.class.getCanonicalName(), null, false);
+        assertNotNull(fooConsumer);
+        assertNotNull(fooConsumer.fooService);
+    }",1
+"@Test
+  public void testAggregatedComputedFolder2()
+      throws Exception {
+    final HttpServletRequest request = Mockito.mock(HttpServletRequest.class);
+    final HttpServletResponse response = Context.get().getResponse();
+    Mockito.when(request.getRequestURI()).thenReturn(""/wro4j/wro/path/to/g1.css"");
+    Context.unset();
+    Context.set(Context.webContext(request, response, Mockito.mock(FilterConfig.class)));
+
+    managerFactory.create().process();
+
+    Assert.assertEquals(""/wro4j/wro/path/to/"", Context.get().getAggregatedFolderPath());
+  }",1
+"@Test
+  public void testFileMoreThanABlockGroup3() throws Exception {
+    testOneFile(""/MoreThanABlockGroup3"",
+        blockSize * dataBlocks * 3 + cellSize * dataBlocks
+        + cellSize + 123);
+  }",1
+"@Test
+  public void testFileMoreThanOneStripe1() throws Exception {
+    testOneFile(""/MoreThanOneStripe1"", cellSize * dataBlocks + 123);
+  }",1
+"@Test
+  public void testFileSmallerThanOneCell1() throws Exception {
+    testOneFile(""/SmallerThanOneCell"", 1);
+  }",1
+"@Test
+  public void testFileSmallerThanOneCell2() throws Exception {
+    testOneFile(""/SmallerThanOneCell"", cellSize - 1);
+  }",1
+"@Test
+  public void testFileSmallerThanOneStripe2() throws Exception {
+    testOneFile(""/SmallerThanOneStripe"", cellSize + 123);
+  }",1
+"@Test
+  public void testStreamFlush() throws Exception {
+    final byte[] bytes = StripedFileTestUtil.generateBytes(blockSize *
+        dataBlocks * 3 + cellSize * dataBlocks + cellSize + 123);
+    try (FSDataOutputStream os = fs.create(new Path(""/ec-file-1""))) {
+      assertFalse(
+          ""DFSStripedOutputStream should not have hflush() capability yet!"",
+          os.hasCapability(StreamCapability.HFLUSH.getValue()));
+      assertFalse(
+          ""DFSStripedOutputStream should not have hsync() capability yet!"",
+          os.hasCapability(StreamCapability.HSYNC.getValue()));
+      try (InputStream is = new ByteArrayInputStream(bytes)) {
+        IOUtils.copyBytes(is, os, bytes.length);
+        os.hflush();
+        IOUtils.copyBytes(is, os, bytes.length);
+        os.hsync();
+        IOUtils.copyBytes(is, os, bytes.length);
+      }",1
+"@Test
+  public void testPerQueueDisablePreemptionBroadHierarchical() {
+    int[][] qData = new int[][] {
+        //  /    A              D              G    
+        //            B    C         E    F         H    I
+        {1000, 350, 150, 200, 400, 200, 200, 250, 100, 150 }",1
+"@Test
+  public void testPreemptCycle() {
+    int[][] qData = new int[][]{
+      //  /   A   B   C
+      { 100, 40, 40, 20 }",1
+"@Test
+  public void testPreemptionNotHappenForSingleReservedQueue() {
+    /*
+     * Test case to make sure, when reserved > pending, preemption will not
+     * happen if there's only one demanding queue.
+     */
+
+    int[][] qData = new int[][]{
+        //  /   A   B   C
+        { 100, 40, 40, 20 }",1
+"@Test
+  public void testConvertAllocationsToReservationInfoEmptyAllocations() {
+    long startTime = new Date().getTime();
+    long step = 10000;
+    int[] alloc = {}",1

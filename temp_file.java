@@ -1,289 +1,374 @@
-/*
- * Copyright (c) 2016-2017 VMware, Inc. All Rights Reserved.
- *
- * This product is licensed to you under the Apache License, Version 2.0 (the "License").
- * You may not use this product except in compliance with the License.
- *
- * This product may include a number of subcomponents with separate copyright notices
- * and license terms. Your use of these subcomponents is subject to the terms and
- * conditions of the subcomponent's license, as noted in the LICENSE file.
- */
+package timely.server.integration;
 
-package com.vmware.admiral.closures.services.closuredescription;
-
-import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.List;
+import java.util.UUID;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit4.SpringRunner;
 
-import com.vmware.admiral.closures.drivers.DriverConstants;
-import com.vmware.admiral.closures.util.ClosureProps;
-import com.vmware.admiral.closures.util.ClosureUtils;
-import com.vmware.admiral.common.util.PropertyUtils;
-import com.vmware.photon.controller.model.ServiceUtils;
-import com.vmware.xenon.common.Operation;
-import com.vmware.xenon.common.ServiceDocument;
-import com.vmware.xenon.common.StatefulService;
-import com.vmware.xenon.common.UriUtils;
-import com.vmware.xenon.common.Utils;
+import io.netty.channel.Channel;
+import io.netty.channel.local.LocalChannel;
+import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import timely.api.request.MetricRequest;
+import timely.api.request.VersionRequest;
+import timely.api.request.timeseries.AggregatorsRequest;
+import timely.api.request.timeseries.MetricsRequest;
+import timely.api.request.timeseries.QueryRequest;
+import timely.api.request.timeseries.SearchLookupRequest;
+import timely.api.request.timeseries.SuggestRequest;
+import timely.api.request.websocket.AddSubscription;
+import timely.api.request.websocket.CloseSubscription;
+import timely.api.request.websocket.CreateSubscription;
+import timely.api.request.websocket.RemoveSubscription;
+import timely.auth.SubjectIssuerDNPair;
+import timely.auth.TimelyPrincipal;
+import timely.auth.TimelyUser;
+import timely.common.component.AuthenticationService;
+import timely.common.configuration.SecurityProperties;
+import timely.model.Metric;
+import timely.netty.websocket.WebSocketRequestDecoder;
+import timely.netty.websocket.subscription.SubscriptionConstants;
+import timely.server.test.CaptureChannelHandlerContext;
+import timely.server.test.TestConfiguration;
+import timely.test.IntegrationTest;
+import timely.test.TimelyTestRule;
 
-/**
- * Represents closure definition service.
- */
-@SuppressWarnings("ALL")
-public class ClosureDescriptionService extends StatefulService {
+@Category(IntegrationTest.class)
+@RunWith(SpringRunner.class)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+public class WebSocketRequestDecoderIT {
 
-    public ClosureDescriptionService() {
-        super(ClosureDescription.class);
+    public static class WebSocketCaptureChannelHandlerContext extends CaptureChannelHandlerContext {
 
-        super.toggleOption(ServiceOption.REPLICATION, true);
-        super.toggleOption(ServiceOption.PERSISTENCE, true);
-        super.toggleOption(ServiceOption.OWNER_SELECTION, true);
-    }
+        private Channel channel = new LocalChannel();
 
-    @Override
-    public void handleStart(Operation post) {
-        logInfo("Handle post....");
-        if (isBodyEmpty(post)) {
-            return;
-        }
-
-        ClosureDescription body = post.getBody(ClosureDescription.class);
-        logInfo("Closure source: %s, Closure source URL: %s, language: %s", body.source,
-                body.sourceURL,
-                body.runtime);
-
-        if (!isValid(post, body)) {
-            return;
-        }
-
-        verifyResourceConstraints(body);
-
-        formatDependencies(body);
-
-        if (body.outputNames == null) {
-            body.outputNames = new ArrayList<>(0);
-        }
-        if (body.inputs == null) {
-            body.inputs = new HashMap<>(0);
-        }
-
-        this.setState(post, body);
-        post.setBody(body).complete();
-    }
-
-    private void formatDependencies(ClosureDescription body) {
-        if (!ClosureUtils.isEmpty(body.dependencies) && body.runtime
-                .equalsIgnoreCase(DriverConstants.RUNTIME_NODEJS_4)) {
-            JsonParser parser = new JsonParser();
-            JsonElement jsElement = parser.parse(body.dependencies);
-            body.dependencies = jsElement.toString();
+        @Override
+        public Channel channel() {
+            return channel;
         }
     }
 
-    @Override
-    public void handlePatch(Operation patch) {
-        if (isBodyEmpty(patch)) {
-            return;
-        }
+    private static final Long TEST_TIME = (System.currentTimeMillis() / 1000) * 1000;
 
-        ClosureDescription currentState = getState(patch);
-        ClosureDescription patchedState = patch.getBody(ClosureDescription.class);
-        logInfo("Closure source: %s Closure source URL: %s, language: %s", patchedState.source,
-                patchedState.sourceURL, patchedState.runtime);
+    private SecurityProperties requireUserSecurity = TestConfiguration.requireUserSecurity();
+    private SecurityProperties anonymousSecurity = TestConfiguration.anonymousSecurity();
+    private WebSocketRequestDecoder decoder = null;
+    private List<Object> results = new ArrayList<>();
+    private String cookie = null;
+    private CaptureChannelHandlerContext ctx = new WebSocketCaptureChannelHandlerContext();
 
-        if (patchedState.logConfiguration != null && !patchedState.logConfiguration.isJsonNull()) {
-            currentState.logConfiguration = patchedState.logConfiguration;
-        }
+    @Autowired
+    @Rule
+    public TimelyTestRule testRule;
 
-        patchedState.logConfiguration = null;
-        PropertyUtils.mergeServiceDocuments(currentState, patchedState);
+    @Autowired
+    private AuthenticationService authenticationService;
 
-        if (patchedState.parentDescriptionLink != null
-                && patchedState.parentDescriptionLink.trim().isEmpty()) {
-            currentState.parentDescriptionLink = null;
-        }
+    @Autowired
+    private SecurityProperties securityProperties;
 
-        if (!isValid(patch, currentState)) {
-            return;
-        }
-
-        verifyResourceConstraints(currentState);
-
-        formatDependencies(currentState);
-
-        patch.setBody(currentState).complete();
+    @Before
+    public void before() throws Exception {
+        cookie = URLEncoder.encode(UUID.randomUUID().toString(), StandardCharsets.UTF_8.name());
+        TimelyUser timelyUser = new TimelyUser(SubjectIssuerDNPair.of("ANONYMOUS"), TimelyUser.UserType.USER, securityProperties.getRequiredAuths(),
+                        securityProperties.getRequiredRoles(), null, -1L);
+        authenticationService.getAuthCache().put(cookie, new TimelyPrincipal(timelyUser));
+        results.clear();
+        ctx = new WebSocketCaptureChannelHandlerContext();
     }
 
-    @Override
-    public void handleDelete(Operation delete) {
-
-        logInfo("Deleting item: %s", delete.getUri());
-
-        delete.complete();
-
+    @Test
+    public void testVersion() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+    // @formatter:off
+        String request = "{ "+
+          "\"operation\" : \"version\"" +
+        " }";
+        // @formatter:on
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(VersionRequest.class, results.get(0).getClass());
     }
 
-    @Override
-    public ServiceDocument getDocumentTemplate() {
-        ServiceDocument template = super.getDocumentTemplate();
-        ServiceUtils.setRetentionLimit(template);
-        return template;
+    @Test
+    public void testPutMetric() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+    // @formatter:off
+        String request = "{" +
+          "\"operation\" : \"put\",\n" +
+          "\"name\" : \"sys.cpu.user\",\n" +
+          "\"timestamp\":" + TEST_TIME + ",\n" +
+          "\"measure\":1.0,\n" +
+          "\"tags\":[ {\n" +
+              "\"key\":\"tag1\",\n" +
+              "\"value\":\"value1\"\n" +
+          "},{\n" +
+              "\"key\":\"tag2\",\n" +
+              "\"value\":\"value2\"\n" +
+          "}]\n" +
+        "}";
+        // @formatter:on
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(MetricRequest.class, results.get(0).getClass());
+        Metric metric = ((MetricRequest) results.iterator().next()).getMetric();
+        Assert.assertEquals("sys.cpu.user", metric.getName());
+        Assert.assertEquals(TEST_TIME, metric.getValue().getTimestamp());
+        Assert.assertEquals(1.0D, metric.getValue().getMeasure(), 0.0D);
+        Assert.assertEquals(2, metric.getTags().size());
     }
 
-    // PRIVATE METHODS
-
-    private void verifyResourceConstraints(ClosureDescription body) {
-        if (body.resources == null) {
-            body.resources = createDefaultConstraints(body);
-        } else {
-            // Validate Memory & CPU resource constraints
-            if (body.resources.ramMB < ClosureProps.MIN_MEMORY_MB_RES_CONSTRAINT) {
-                logWarning("Closure definition memory is below allowed min: %s. Setting to min"
-                                + " allowed: %s",
-                        body.resources.ramMB, ClosureProps.MIN_MEMORY_MB_RES_CONSTRAINT);
-                body.resources.ramMB = ClosureProps.MIN_MEMORY_MB_RES_CONSTRAINT;
-            } else if (body.resources.ramMB > ClosureProps.MAX_MEMORY_MB_RES_CONSTRAINT) {
-                logWarning("Closure definition memory is above allowed max: %s. Setting to max"
-                                + " allowed: %s",
-                        body.resources.ramMB, ClosureProps.MAX_MEMORY_MB_RES_CONSTRAINT);
-                body.resources.ramMB = ClosureProps.MAX_MEMORY_MB_RES_CONSTRAINT;
-            }
-
-            // Calculate CPU shares based on memory
-            body.resources.cpuShares = calculateCpuShares(body.resources.ramMB);
-            logInfo("Calculated CPU shares: %s for memory used: %s", body.resources.ramMB,
-                    body.resources.cpuShares);
-
-            // Validate execution Timeout
-            if (body.resources.timeoutSeconds < ClosureProps.MIN_EXEC_TIMEOUT_SECONDS) {
-                logWarning("Closure definition timeout is below allowed min: %s. Setting to min"
-                                + " allowed: %s",
-                        body.resources.timeoutSeconds, ClosureProps.MIN_EXEC_TIMEOUT_SECONDS);
-                body.resources.timeoutSeconds = ClosureProps.MIN_EXEC_TIMEOUT_SECONDS;
-            } else if (body.resources.timeoutSeconds > ClosureProps.MAX_EXEC_TIMEOUT_SECONDS) {
-                logWarning("Closure definition timeout is above the allowed max: %s. Setting to max"
-                                + " allowed: %s",
-                        body.resources.timeoutSeconds, ClosureProps.MAX_EXEC_TIMEOUT_SECONDS);
-                body.resources.timeoutSeconds = ClosureProps.MAX_EXEC_TIMEOUT_SECONDS;
-            }
-        }
+    @Test
+    public void testCreateSubscriptionWithMissingSessionId() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, requireUserSecurity);
+    // @formatter:off
+        String request = "{ "+
+          "\"operation\" : \"create\", " +
+          "\"subscriptionId\" : \"1234\"" +
+        " }";
+        // @formatter:on
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertNotNull(ctx.msg);
+        Assert.assertEquals(CloseWebSocketFrame.class, ctx.msg.getClass());
+        Assert.assertEquals(1008, ((CloseWebSocketFrame) ctx.msg).statusCode());
+        Assert.assertEquals("User must authenticate", ((CloseWebSocketFrame) ctx.msg).reasonText());
     }
 
-    /**
-     * Calculate CPU shares proportionally based on memory reservation.
-     */
-    private Integer calculateCpuShares(Integer ramMB) {
-        double memPercent = (float) ramMB / ClosureProps.MAX_MEMORY_MB_RES_CONSTRAINT;
-
-        int calculatedShares = (int) Math.round(memPercent * ClosureProps.DEFAULT_CPU_SHARES);
-
-        if (calculatedShares < ClosureProps.MIN_CPU_SHARES) {
-            calculatedShares = ClosureProps.MIN_CPU_SHARES;
-        }
-
-        return calculatedShares;
+    @Test
+    public void testCreateSubscriptionWithInvalidSessionIdAndNonAnonymousAccess() throws Exception {
+        ctx.channel().attr(SubscriptionConstants.SESSION_ID_ATTR).set(URLEncoder.encode(UUID.randomUUID().toString(), StandardCharsets.UTF_8.name()));
+        decoder = new WebSocketRequestDecoder(authenticationService, requireUserSecurity);
+    // @formatter:off
+        String request = "{ "+
+          "\"operation\" : \"create\", " +
+          "\"subscriptionId\" : \"1234\"" +
+        " }";
+        // @formatter:on
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertNotNull(ctx.msg);
+        Assert.assertEquals(CloseWebSocketFrame.class, ctx.msg.getClass());
+        Assert.assertEquals(1008, ((CloseWebSocketFrame) ctx.msg).statusCode());
+        Assert.assertEquals("User must authenticate", ((CloseWebSocketFrame) ctx.msg).reasonText());
     }
 
-    private ResourceConstraints createDefaultConstraints(ClosureDescription body) {
-        return new ResourceConstraints();
+    @Test
+    public void testCreateSubscriptionWithValidSessionIdAndNonAnonymousAccess() throws Exception {
+        ctx.channel().attr(SubscriptionConstants.SESSION_ID_ATTR).set(cookie);
+        decoder = new WebSocketRequestDecoder(authenticationService, requireUserSecurity);
+    // @formatter:off
+        String request = "{ " +
+          "\"operation\" : \"create\"," +
+          "\"subscriptionId\" : \"" + cookie + "\"" +
+        "}";
+        // @formatter:on
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(CreateSubscription.class, results.get(0).getClass());
     }
 
-    private boolean isValid(Operation op, ClosureDescription body) {
-        if (!isRuntimeSupported(body)) {
-            String errorMsg = "Runtime '%s' is not supported!";
-            logWarning(errorMsg, body.runtime);
-            op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-            op.fail(new IllegalArgumentException(String.format(errorMsg, body.runtime)));
-            return false;
-        }
-
-        if (ClosureUtils.isEmpty(body.sourceURL) && ClosureUtils.isEmpty(body.source)) {
-            String errorMsg = "Closure source or closure source URL is required";
-            logWarning(errorMsg);
-            op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-            op.fail(new IllegalArgumentException(errorMsg));
-            return false;
-        }
-
-        if (!ClosureUtils.isEmpty(body.sourceURL)) {
-            URI uri = UriUtils.buildUri(body.sourceURL);
-            if (uri == null) {
-                String errorMsg = "Closure source URI is NOT valid!";
-                logWarning(errorMsg);
-                op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-                op.fail(new IllegalArgumentException(errorMsg));
-                return false;
-            }
-
-            String uriScheme = uri.getScheme();
-            if (!("HTTP".equalsIgnoreCase(uriScheme) || "HTTPS".equalsIgnoreCase(uriScheme))) {
-                String errorMsg = "Closure source URI is NOT valid! Only 'http' or 'https' "
-                        + "schemes are supported";
-                logWarning(errorMsg);
-                op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-                op.fail(new IllegalArgumentException(errorMsg));
-                return false;
-            }
-        }
-
-        if (ClosureUtils.isEmpty(body.name)) {
-            String errorMsg = "Closure name is required.";
-            logWarning(errorMsg);
-            op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-            op.fail(new IllegalArgumentException("Closure name is required."));
-            return false;
-        }
-
-        if (!ClosureUtils.isEmpty(body.entrypoint)) {
-            if (body.entrypoint.indexOf('.') < 0) {
-                String errorMsg = "Invalid format of Closure entrypoint provided. Valid format:"
-                        + " module_name.handler_name";
-                logWarning(errorMsg);
-                op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-                op.fail(new IllegalArgumentException(errorMsg));
-                return false;
-            }
-        }
-
-        if (DriverConstants.RUNTIME_NODEJS_4.equalsIgnoreCase(body.runtime)
-                && !ClosureUtils.isEmpty(body.dependencies)) {
-            JsonParser parser = new JsonParser();
-            try {
-                parser.parse(body.dependencies);
-            } catch (JsonSyntaxException ex) {
-                logWarning("Invalid dependencies format: %s", Utils.toString(ex));
-                op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-                op.fail(new IllegalArgumentException("Invalid JSON format: " + ex.getMessage()));
-            }
-        }
-
-        return true;
+    @Test
+    public void testCreateSubscriptionWithoutSubscriptionId() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"create\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertNotNull(ctx.msg);
+        Assert.assertEquals(CloseWebSocketFrame.class, ctx.msg.getClass());
+        Assert.assertEquals(1008, ((CloseWebSocketFrame) ctx.msg).statusCode());
+        Assert.assertEquals("Subscription ID is required.", ((CloseWebSocketFrame) ctx.msg).reasonText());
     }
 
-    private boolean isRuntimeSupported(ClosureDescription closureDesc) {
-        switch (closureDesc.runtime) {
-        case DriverConstants.RUNTIME_NODEJS_4:
-        case DriverConstants.RUNTIME_PYTHON_3:
-        case DriverConstants.RUNTIME_POWERSHELL_6:
-        case DriverConstants.RUNTIME_JAVA_8:
-        case DriverConstants.RUNTIME_NASHORN:
-            return true;
-        default:
-            return false;
-        }
+    @Test
+    public void testCreateSubscription() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"create\", \"subscriptionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(CreateSubscription.class, results.get(0).getClass());
+        CreateSubscription create = (CreateSubscription) results.iterator().next();
+        create.validate();
     }
 
-    private boolean isBodyEmpty(Operation op) {
-        if (!op.hasBody()) {
-            op.setStatusCode(Operation.STATUS_CODE_BAD_REQUEST);
-            op.fail(new IllegalArgumentException("Empty body is provided."));
-            return true;
-        }
-        return false;
+    @Test
+    public void testAddSubscription() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"add\", \"subscriptionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(AddSubscription.class, results.get(0).getClass());
+        AddSubscription add = (AddSubscription) results.iterator().next();
+        add.validate();
     }
 
+    @Test
+    public void testRemoveSubscription() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"remove\", \"subscriptionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(RemoveSubscription.class, results.get(0).getClass());
+        RemoveSubscription remove = (RemoveSubscription) results.iterator().next();
+        remove.validate();
+    }
+
+    @Test
+    public void testCloseSubscription() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"close\", \"subscriptionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(CloseSubscription.class, results.get(0).getClass());
+        CloseSubscription close = (CloseSubscription) results.iterator().next();
+        close.validate();
+    }
+
+    @Test
+    public void testAggregrators() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"aggregators\", \"sessionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(AggregatorsRequest.class, results.get(0).getClass());
+        AggregatorsRequest agg = (AggregatorsRequest) results.iterator().next();
+        agg.validate();
+    }
+
+    @Test
+    public void testMetrics() throws Exception {
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        String request = "{ \"operation\" : \"metrics\", \"sessionId\" : \"1234\" }";
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(MetricsRequest.class, results.get(0).getClass());
+        MetricsRequest metrics = (MetricsRequest) results.iterator().next();
+        metrics.validate();
+    }
+
+    @Test
+    public void testQuery() throws Exception {
+        // @formatter:off
+        String request =
+        "{\n"+
+        "     \"operation\" : \"query\",\n"+
+        "    \"sessionId\" : \"1234\",\n"+
+        "    \"start\": 1356998400,\n"+
+        "    \"end\": 1356998460,\n"+
+        "    \"queries\": [\n"+
+        "        {\n"+
+        "            \"aggregator\": \"sum\",\n"+
+        "            \"metric\": \"sys.cpu.user\",\n"+
+        "            \"rate\": \"true\",\n"+
+        "            \"rateOptions\": \n"+
+        "                {\"counter\":false,\"counterMax\":100,\"resetValue\":0},\n"+
+        "            \"tags\": {\n"+
+        "                   \"host\": \"*\",\n" +
+        "                   \"rack\": \"r1\"\n" +
+        "            },\n"+
+        "            \"filters\": [\n"+
+        "                {\n"+
+        "                   \"type\":\"wildcard\",\n"+
+        "                   \"tagk\":\"host\",\n"+
+        "                   \"filter\":\"*\",\n"+
+        "                   \"groupBy\":true\n"+
+        "                },\n"+
+        "                {\n"+
+        "                   \"type\":\"literal_or\",\n"+
+        "                   \"tagk\":\"rack\",\n"+
+        "                   \"filter\":\"r1|r2\",\n"+
+        "                   \"groupBy\":false\n"+
+        "                }\n"+
+        "            ]\n"+
+        "        },\n"+
+        "        {\n"+
+        "            \"aggregator\": \"sum\",\n"+
+        "            \"tsuids\": [\n"+
+        "                \"000001000002000042\",\n"+
+        "                \"000001000002000043\"\n"+
+        "            ]\n"+
+        "        }\n"+
+        "    ]\n"+
+        "}";
+        // @formatter:on
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(QueryRequest.class, results.get(0).getClass());
+        QueryRequest query = (QueryRequest) results.iterator().next();
+        query.validate();
+    }
+
+    @Test
+    public void testLookup() throws Exception {
+        String request = "{ \"operation\" : \"lookup\", \"sessionId\" : \"1234\", \"metric\" : \"sys.cpu.user\" }";
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(SearchLookupRequest.class, results.get(0).getClass());
+        SearchLookupRequest lookup = (SearchLookupRequest) results.iterator().next();
+        Assert.assertEquals("sys.cpu.user", lookup.getQuery());
+        lookup.validate();
+    }
+
+    @Test
+    public void testSuggest() throws Exception {
+        // @formatter:off
+        String request =
+                "{\n" +
+                "    \"operation\" : \"suggest\",\n" +
+                "    \"sessionId\" : \"1234\",\n" +
+                "    \"type\": \"metrics\",\n" +
+                "    \"m\": \"sys.cpu.user\",\n" +
+                "    \"max\": 30\n" +
+                "}";
+        // @formatter:on
+        decoder = new WebSocketRequestDecoder(authenticationService, anonymousSecurity);
+        TextWebSocketFrame frame = new TextWebSocketFrame();
+        frame.content().writeBytes(request.getBytes(StandardCharsets.UTF_8));
+        decoder.decode(ctx, frame, results);
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals(SuggestRequest.class, results.get(0).getClass());
+        SuggestRequest suggest = (SuggestRequest) results.iterator().next();
+        Assert.assertEquals("metrics", suggest.getType());
+        Assert.assertEquals("sys.cpu.user", suggest.getMetric().get());
+        Assert.assertEquals(30, suggest.getMax());
+        suggest.validate();
+    }
 }
