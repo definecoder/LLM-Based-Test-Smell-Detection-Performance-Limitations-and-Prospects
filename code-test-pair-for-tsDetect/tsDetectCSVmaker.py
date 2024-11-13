@@ -14,8 +14,8 @@ for _, row in data.iterrows():
     app_name = f"{row['id']}_{row['idProject']}_{row['testCase'].split('.')[-1]}"
 
     # Generate paths for the test and production files
-    path_to_test_file = f"./downloaded_files/{row['id']}_test.java"
-    path_to_production_file = f"./downloaded_files/{row['id']}_actual.java"
+    path_to_test_file = f"/Users/codermehraj/Documents/codes/thesis/code-test-pair-for-tsDetect/downloaded_files/{row['id']}_test.java"
+    path_to_production_file = f"/Users/codermehraj/Documents/codes/thesis/code-test-pair-for-tsDetect/downloaded_files/{row['id']}_actual.java"
 
     # Append to records list
     records.append({
