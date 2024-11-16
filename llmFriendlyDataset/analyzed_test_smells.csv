@@ -1,0 +1,782 @@
+App,TestFilePath,ProductionFilePath,Test_File_Content,Production_File_Content,Present_Test_Smells,Explanation
+4748_18.0_admiral_testcomparerunningcontainerinusernetworkwithdefaultpropertiesandmatchedcontainerstateshouldpass,/Users/codermehraj/Documents/codes/thesis/code-test-pair-for-tsDetect/downloaded_files/4748_test.java,/Users/codermehraj/Documents/codes/thesis/code-test-pair-for-tsDetect/downloaded_files/4748_actual.java,"/*
+ * Copyright (c) 2016-2020 VMware, Inc. All Rights Reserved.
+ *
+ * This product is licensed to you under the Apache License, Version 2.0 (the ""License"").
+ * You may not use this product except in compliance with the License.
+ *
+ * This product may include a number of subcomponents with separate copyright notices
+ * and license terms. Your use of these subcomponents is subject to the terms and
+ * conditions of the subcomponent's license, as noted in the LICENSE file.
+ */
+
+package com.vmware.admiral.adapter.docker.service;
+
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_COMMAND_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_CONFIG_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_CREATED_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_ID_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_IMAGE_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_ALIASES_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_IPV4_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_IPV6_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_LINKS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NAME_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_IP_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_NETWORKS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_PORTS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_STARTED_PROP_NAME;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.junit.Before;
+import org.junit.Test;
+
+import com.vmware.admiral.compute.container.ContainerService.ContainerState;
+import com.vmware.admiral.compute.container.ContainerService.ContainerState.PowerState;
+import com.vmware.admiral.compute.container.PortBinding;
+import com.vmware.admiral.compute.container.ServiceNetwork;
+
+public class ContainerStateMapperTest {
+
+    private static final String HOST_IP_PROP_NAME = ""HostIp"";
+    private static final String HOST_PORT_PROP_NAME = ""HostPort"";
+
+    private static final String BRIDGE_NETWORK_NAME = ""bridge"";
+
+    private static final String DEFAULT_CONTAINER_ID = ""test-container-id"";
+    private static final String DEFAULT_CONTAINER_NAME = ""test-container-name"";
+    private static final String DEFAULT_CONTAINER_CREATED_TIME = ""2016-11-24T12:01:02.123456789Z"";
+    private static final boolean DEFAULT_CONTAINER_RUNNING_STATE = true;
+    private static final String DEFAULT_CONTAINER_STARTED_TIME = ""2016-11-24T12:02:01.987654321Z"";
+    private static final String DEFAULT_CONTAINER_IMAGE = ""alpine"";
+    private static final String DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV4_ADDRESS = ""172.17.0.2"";
+    private static final String DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV6_ADDRESS = """";
+    private static final String DEFAULT_CONTAINER_EXPOSED_CONTAINER_PORT = ""80/tcp"";
+    private static final String DEFAULT_CONTAINER_PUBLISHED_HOST_PORT = ""80"";
+    private static final String DEFAULT_CONTAINER_PUBLISHED_HOST_IP = ""0.0.0.0"";
+
+    private static final String[] DEFAULT_CONTAINER_BRIDGE_NETWORK_LINKS_ARRAY = new String[] {
+            ""container:alias"" };
+    private static final String[] DEFAULT_CONTAINER_BRIDGE_NETWORK_ALIASES_ARRAY = new String[] {
+            ""alias"" };
+    private static final String[] DEFAULT_CONTAINER_COMMAND_ARRAY = new String[] { ""sh"" };
+
+    private ContainerState predefinedState;
+    private Map<String, Object> predefinedInspectMap;
+
+    @Before
+    public void setUp() {
+        predefinedState = getDefaultContainerState();
+        predefinedInspectMap = getDefaultContainerInspectResponseAsMap();
+    }
+
+    @Test
+    public void testParseDate() {
+        String iso8601WithMicroseconds = ""2015-08-26T20:57:44.715343657Z"";
+        String iso8601WithMilliseconds = ""2015-08-26T20:57:44.715Z"";
+        String vicDateTime = ""2015-08-26 20:57:44 +0000 UTC"";
+
+        Long parsed = ContainerStateMapper.parseDate(iso8601WithMicroseconds);
+        Instant fromEpochMilli = Instant.ofEpochMilli(parsed);
+
+        // Assert that microseconds are ignored in the context of epoch millisecond
+        assertEquals(iso8601WithMilliseconds, fromEpochMilli.toString());
+
+        // test workaround datetime parser for VIC host
+        Long vic = ContainerStateMapper.parseDate(vicDateTime);
+        assertEquals(715, parsed - vic);
+    }
+
+    @Test
+    public void testPatchUnhealthyContainerState() {
+
+        // When the health check fails for a given container, its power state is marked as 'ERROR'
+        // and its status as 'unhealthy'. See ContainerHealthEvaluator.patchContainerStatus.
+        predefinedState.powerState = PowerState.ERROR;
+        predefinedState.status = ContainerState.CONTAINER_UNHEALTHY_STATUS;
+
+        ContainerState mappedState = new ContainerState();
+        mappedState.powerState = predefinedState.powerState;
+        mappedState.status = predefinedState.status;
+
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+
+        assertEquals(PowerState.ERROR, mappedState.powerState);
+        assertEquals(ContainerState.CONTAINER_UNHEALTHY_STATUS, mappedState.status);
+    }
+
+    @SuppressWarnings(""unchecked"")
+    @Test
+    public void testPatchHealthyContainerState() {
+
+        // Set running state to true
+        ((Map<String, Object>) predefinedInspectMap.get(DOCKER_CONTAINER_STATE_PROP_NAME))
+                .put(DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME, true);
+
+        ContainerState mappedState = new ContainerState();
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+
+        assertEquals(PowerState.RUNNING, mappedState.powerState);
+        assertEquals(null, mappedState.status);
+
+        // Set running state to false
+        ((Map<String, Object>) predefinedInspectMap.get(DOCKER_CONTAINER_STATE_PROP_NAME))
+                .put(DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME, false);
+
+        mappedState = new ContainerState();
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+
+        assertEquals(PowerState.STOPPED, mappedState.powerState);
+        assertEquals(null, mappedState.status);
+
+        // Set running state to true... after the power state has been set to error
+        ((Map<String, Object>) predefinedInspectMap.get(DOCKER_CONTAINER_STATE_PROP_NAME))
+                .put(DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME, true);
+
+        mappedState = new ContainerState();
+        mappedState.status = ContainerState.CONTAINER_DEGRADED_STATUS; // degraded but healthy
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+
+        assertEquals(PowerState.RUNNING, mappedState.powerState);
+        assertEquals(ContainerState.CONTAINER_DEGRADED_STATUS, mappedState.status);
+    }
+
+    /**
+     * Build a {@link ContainerState} instance that has a user-defined network and the
+     * system-defined ""bridge"" network. Also build the inspect command map representation and use
+     * the {@link ContainerStateMapper} to produce the mapped {@link ContainerState}. Both states
+     * should be identical.
+     */
+    @Test
+    public void testCompareRunningContainerInUserNetworkAndMatchedContainerStateShouldPass() {
+        String networkName = ""test-network"";
+        String ipv4 = ""172.100.0.100"";
+        String ipv6 = ""fe80::aa"";
+        String[] aliases = new String[] { ""alias"" };
+        String[] links = new String[] { ""service:alias"" };
+
+        predefinedState.networks.put(networkName,
+                createServiceNetwork(networkName, ipv4, ipv6, aliases, links));
+        addNetworkToInspectMap(predefinedInspectMap, networkName, ipv4, ipv6, aliases, links);
+
+        ContainerState mappedState = new ContainerState();
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+        assertTrue(""predefined and mapped state should be equal"",
+                areEqualContainerStates(predefinedState, mappedState));
+    }
+
+    /**
+     * Build a {@link ContainerState} instance that has a user-defined network and the
+     * system-defined ""bridge"" network. Also build the inspect command map representation and use
+     * the {@link ContainerStateMapper} to produce the mapped {@link ContainerState}. Both states
+     * should be identical.
+     *
+     * Note: in this test only the mandatory network properties (name and IPv4 address) are set and
+     * all the others are set to <code>null</code>. Test should pass again.
+     */
+    @Test
+    public void testCompareRunningContainerInUserNetworkWithDefaultPropertiesAndMatchedContainerStateShouldPass() {
+        String networkName = ""test-network"";
+        String ipv4 = ""172.100.0.100"";
+
+        predefinedState.networks.put(networkName,
+                createServiceNetwork(networkName, ipv4));
+        addNetworkToInspectMap(predefinedInspectMap, networkName, ipv4);
+
+        ContainerState mappedState = new ContainerState();
+        ContainerStateMapper.propertiesToContainerState(mappedState, predefinedInspectMap);
+        assertTrue(""predefined and mapped state should be equal"",
+                areEqualContainerStates(predefinedState, mappedState));
+    }
+
+    /**
+     * Creates a {@link ServiceNetwork} instance with the specified name and IPv4 address. All other
+     * properties (IPv6 address, aliases, links) are <code>null</code>
+     */
+    private ServiceNetwork createServiceNetwork(String name, String ipv4) {
+        return createServiceNetwork(name, ipv4, null, null, null);
+    }
+
+    /**
+     * Creates a {@link ServiceNetwork} instance with the provided properties
+     */
+    private ServiceNetwork createServiceNetwork(String name, String ipv4, String ipv6,
+            String[] aliases, String[] links) {
+        ServiceNetwork network = new ServiceNetwork();
+        network.name = name;
+        network.ipv4_address = ipv4;
+        network.ipv6_address = ipv6;
+        network.aliases = aliases;
+        network.links = links;
+        return network;
+    }
+
+    /**
+     * Returns a part of a docker inspect command output that contains all the info about a single
+     * container
+     */
+    private Map<String, Object> getDefaultContainerInspectResponseAsMap() {
+        Map<String, Object> containerInspect = new HashMap<>();
+
+        containerInspect.put(DOCKER_CONTAINER_ID_PROP_NAME, DEFAULT_CONTAINER_ID);
+        // container inspect returns this with a forwar slash prefix
+        containerInspect.put(DOCKER_CONTAINER_NAME_PROP_NAME, ""/"" + DEFAULT_CONTAINER_NAME);
+        containerInspect.put(DOCKER_CONTAINER_CREATED_PROP_NAME, DEFAULT_CONTAINER_CREATED_TIME);
+
+        Map<String, Object> state = new HashMap<>();
+        state.put(DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME, DEFAULT_CONTAINER_RUNNING_STATE);
+        state.put(DOCKER_CONTAINER_STATE_STARTED_PROP_NAME, DEFAULT_CONTAINER_STARTED_TIME);
+        containerInspect.put(DOCKER_CONTAINER_STATE_PROP_NAME, state);
+
+        Map<String, Object> config = new HashMap<>();
+        config.put(DOCKER_CONTAINER_COMMAND_PROP_NAME,
+                Arrays.asList(DEFAULT_CONTAINER_COMMAND_ARRAY));
+        config.put(DOCKER_CONTAINER_IMAGE_PROP_NAME, DEFAULT_CONTAINER_IMAGE);
+        containerInspect.put(DOCKER_CONTAINER_CONFIG_PROP_NAME, config);
+
+        Map<String, Object> networkSettings = new HashMap<>();
+        networkSettings.put(DOCKER_CONTAINER_NETWORK_SETTINGS_IP_ADDRESS_PROP_NAME,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV4_ADDRESS);
+        networkSettings.put(DOCKER_CONTAINER_NETWORK_SETTINGS_PORTS_PROP_NAME,
+                getDefaultContainerPortMappings());
+        containerInspect.put(DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME, networkSettings);
+        // add connection to bridge network
+        addNetworkToInspectMap(containerInspect, BRIDGE_NETWORK_NAME,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV4_ADDRESS,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV6_ADDRESS,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_ALIASES_ARRAY,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_LINKS_ARRAY);
+
+        return containerInspect;
+    }
+
+    /**
+     * Returns the port mappings for the default container in a {@link Map} instance that is
+     * suitable to be plugged in the inspect map.
+     */
+    private Map<String, List<Map<String, String>>> getDefaultContainerPortMappings() {
+        Map<String, List<Map<String, String>>> portMappings = new HashMap<>();
+
+        Map<String, String> mapping = new HashMap<>();
+        mapping.put(HOST_IP_PROP_NAME, DEFAULT_CONTAINER_PUBLISHED_HOST_IP);
+        mapping.put(HOST_PORT_PROP_NAME, DEFAULT_CONTAINER_PUBLISHED_HOST_PORT);
+
+        portMappings.put(DEFAULT_CONTAINER_EXPOSED_CONTAINER_PORT,
+                Collections.singletonList(mapping));
+        return portMappings;
+    }
+
+    /**
+     * Adds a network definition with the provided name and IPv4 address to the specified inspect
+     * map. All other properties (IPv6, aliases, links) are <code>null</code>.
+     */
+    private void addNetworkToInspectMap(Map<String, Object> inspectMap, String networkName,
+            String ipv4) {
+        addNetworkToInspectMap(inspectMap, networkName, ipv4, null, null, null);
+    }
+
+    /**
+     * Adds a network definition with the provided properties in the specified inspect map
+     */
+    private void addNetworkToInspectMap(Map<String, Object> inspectMap, String networkName,
+            String ipv4, String ipv6, String[] aliases, String[] links) {
+        @SuppressWarnings(""unchecked"")
+        Map<String, Object> networkSettings = (Map<String, Object>) inspectMap
+                .get(DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME);
+        if (networkSettings == null) {
+            networkSettings = new HashMap<>();
+            inspectMap.put(DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME, networkSettings);
+        }
+        @SuppressWarnings(""unchecked"")
+        Map<String, Map<String, Object>> networks = (Map<String, Map<String, Object>>) networkSettings
+                .get(DOCKER_CONTAINER_NETWORK_SETTINGS_NETWORKS_PROP_NAME);
+        if (networks == null) {
+            networks = new HashMap<>();
+            networkSettings.put(DOCKER_CONTAINER_NETWORK_SETTINGS_NETWORKS_PROP_NAME, networks);
+        }
+
+        Map<String, Object> newNetwork = new HashMap<>();
+        newNetwork.put(DOCKER_CONTAINER_NETWORK_LINKS_PROP_NAME,
+                links == null ? null : Arrays.asList(links));
+        newNetwork.put(DOCKER_CONTAINER_NETWORK_ALIASES_PROP_NAME,
+                aliases == null ? null : Arrays.asList(aliases));
+        newNetwork.put(DOCKER_CONTAINER_NETWORK_IPV4_ADDRESS_PROP_NAME, ipv4);
+        newNetwork.put(DOCKER_CONTAINER_NETWORK_IPV6_ADDRESS_PROP_NAME, ipv6);
+
+        networks.put(networkName, newNetwork);
+    }
+
+    /**
+     * Creates and returns a {@link ContainerState} instance that represents the default container
+     * used in this tests.
+     */
+    private ContainerState getDefaultContainerState() {
+        ContainerState containerState = new ContainerState();
+
+        containerState.id = DEFAULT_CONTAINER_ID;
+        containerState.names = Collections.singletonList(DEFAULT_CONTAINER_NAME);
+        containerState.created = Instant.parse(DEFAULT_CONTAINER_CREATED_TIME).toEpochMilli();
+        containerState.powerState = PowerState.RUNNING;
+        containerState.started = Instant.parse(DEFAULT_CONTAINER_STARTED_TIME).toEpochMilli();
+        containerState.image = DEFAULT_CONTAINER_IMAGE;
+        containerState.address = DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV4_ADDRESS;
+        containerState.command = DEFAULT_CONTAINER_COMMAND_ARRAY;
+
+        PortBinding portBinding = new PortBinding();
+        portBinding.hostIp = DEFAULT_CONTAINER_PUBLISHED_HOST_IP;
+        portBinding.hostPort = DEFAULT_CONTAINER_PUBLISHED_HOST_PORT;
+        containerState.ports = Collections.singletonList(portBinding);
+        // strip protocol part of the port definition
+        int protocolDefIndex = DEFAULT_CONTAINER_EXPOSED_CONTAINER_PORT.indexOf('/');
+        portBinding.containerPort = DEFAULT_CONTAINER_EXPOSED_CONTAINER_PORT.substring(0,
+                protocolDefIndex);
+        portBinding.protocol = DEFAULT_CONTAINER_EXPOSED_CONTAINER_PORT
+                .substring(protocolDefIndex + 1);
+
+        // The default container is connected to the bridge network
+        containerState.networks = new HashMap<>(0);
+        ServiceNetwork bridgeNetwork = createServiceNetwork(BRIDGE_NETWORK_NAME,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV4_ADDRESS,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_IPV6_ADDRESS,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_ALIASES_ARRAY,
+                DEFAULT_CONTAINER_BRIDGE_NETWORK_LINKS_ARRAY);
+        containerState.networks.put(BRIDGE_NETWORK_NAME, bridgeNetwork);
+
+        return containerState;
+    }
+
+    /**
+     * Compare the properties of two {@link ContainerState} instances. Returns <code>true</code>
+     * only if all properties of interest match for both states.
+     */
+    private boolean areEqualContainerStates(ContainerState c1, ContainerState c2) {
+        if (c1 == null && c2 != null) {
+            return false;
+        }
+        if (c1 != null && c2 == null) {
+            return false;
+        }
+
+        if (!areEqual(c1.id, c2.id)
+                || !areEqualLists(c1.names, c2.names)
+                || !areEqual(c1.created, c2.created)
+                || c1.powerState != c2.powerState
+                || !areEqual(c1.started, c2.started)
+                || !areEqual(c1.image, c2.image)
+                || !areEqual(c1.address, c2.address)
+                || !Arrays.equals(c1.command, c2.command)
+                || !areEqualLists(c1.ports, c2.ports)
+                || !areEqual(c1.networks, c2.networks)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Check whether two instances of the same class are equal. This will first do a
+     * <code>null</code>-check and then will invoke the <code>equals</code> method of the first
+     * instance.
+     */
+    private <T> boolean areEqual(T s1, T s2) {
+        if (s1 == null && s2 != null) {
+            return false;
+        }
+        if (s1 != null && s2 == null) {
+            return false;
+        }
+
+        return s1.equals(s2);
+    }
+
+    /**
+     * Check whether two lists are consider equal judging by their contents. This will first do a
+     * <code>null</code>-check and then will use the <code>containsAll</code> method to compute the
+     * result.
+     */
+    private <T> boolean areEqualLists(List<T> l1, List<T> l2) {
+        if (l1 == null && l2 != null) {
+            return false;
+        }
+        if (l1 != null && l2 == null) {
+            return false;
+        }
+        if (l1.size() != l2.size()) {
+            return false;
+        }
+        return l1.containsAll(l2);
+    }
+
+}
+","/*
+ * Copyright (c) 2016-2017 VMware, Inc. All Rights Reserved.
+ *
+ * This product is licensed to you under the Apache License, Version 2.0 (the ""License"").
+ * You may not use this product except in compliance with the License.
+ *
+ * This product may include a number of subcomponents with separate copyright notices
+ * and license terms. Your use of these subcomponents is subject to the terms and
+ * conditions of the subcomponent's license, as noted in the LICENSE file.
+ */
+
+package com.vmware.admiral.adapter.docker.service;
+
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_COMMAND_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_CONFIG_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_CREATED_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_ENV_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_ID_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_IMAGE_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_ALIASES_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_IPV4_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_IPV6_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_INSPECT_NETWORKS_PROPS.DOCKER_CONTAINER_NETWORK_LINKS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NAME_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_IP_ADDRESS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_NETWORKS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_PORTS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME;
+import static com.vmware.admiral.adapter.docker.service.DockerAdapterCommandExecutor.DOCKER_CONTAINER_STATE_STARTED_PROP_NAME;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.vmware.admiral.adapter.docker.util.DockerPortMapping;
+import com.vmware.admiral.common.util.AssertUtil;
+import com.vmware.admiral.compute.container.ContainerService.ContainerState;
+import com.vmware.admiral.compute.container.ContainerService.ContainerState.PowerState;
+import com.vmware.admiral.compute.container.PortBinding;
+import com.vmware.admiral.compute.container.ServiceNetwork;
+import com.vmware.xenon.common.LocalizableValidationException;
+
+/**
+ * Map properties into ContainerState
+ */
+public class ContainerStateMapper {
+
+    private ContainerStateMapper() {
+    }
+
+    /**
+     * Convert generic properties from the given map to modeled properties in the given
+     * ContainerState
+     *
+     * @param containerState
+     * @param properties
+     */
+    public static void propertiesToContainerState(ContainerState containerState,
+            Map<String, Object> properties) {
+
+        AssertUtil.assertNotNull(containerState, ""containerState"");
+        AssertUtil.assertNotNull(properties, ""properties"");
+
+        containerState.id = (String) properties.get(DOCKER_CONTAINER_ID_PROP_NAME);
+        String name = (String) properties.get(DOCKER_CONTAINER_NAME_PROP_NAME);
+        if (name != null && name.startsWith(""/"")) {
+            name = name.substring(1);
+        }
+        containerState.names = Collections.singletonList(name);
+
+        containerState.created = parseDate(properties.get(DOCKER_CONTAINER_CREATED_PROP_NAME));
+
+        mapStateProperties(containerState, getMap(properties, DOCKER_CONTAINER_STATE_PROP_NAME));
+
+        mapConfigProperties(containerState, getMap(properties, DOCKER_CONTAINER_CONFIG_PROP_NAME));
+
+        mapNetworkSettingsProperties(containerState,
+                getMap(properties, DOCKER_CONTAINER_NETWORK_SETTINGS_PROP_NAME));
+    }
+
+    /**
+     * Map the result from listing all containers - State property to the PowerState enum.
+     * Returns {@link PowerState} if state is mapped.
+     */
+    public static PowerState mapPowerState(String state) {
+        // docker states when listing all containers:
+        // created|restarting|running|removing|paused|exited|dead
+        state = state.toLowerCase();
+
+        switch (state) {
+        case ""running"":
+            return PowerState.RUNNING;
+        case ""paused"":
+            return PowerState.PAUSED;
+        case ""exited"":
+        case ""dead"":
+            return PowerState.STOPPED;
+        default:
+            return null;
+        }
+    }
+
+    /**
+     * Process properties in the State object
+     *
+     * @param containerState
+     * @param state
+     */
+    private static void mapStateProperties(ContainerState containerState,
+            Map<String, Object> state) {
+        if (state == null) {
+            return;
+        }
+        containerState.started = parseDate(state.get(DOCKER_CONTAINER_STATE_STARTED_PROP_NAME));
+
+        mapPowerState(containerState, state);
+    }
+
+    /**
+     * Process properties in the Config object
+     *
+     * @param containerState
+     * @param config
+     */
+    private static void mapConfigProperties(ContainerState containerState,
+            Map<String, Object> config) {
+        if (config == null) {
+            return;
+        }
+        @SuppressWarnings(""unchecked"")
+        Collection<String> commandList = (Collection<String>) config
+                .get(DOCKER_CONTAINER_COMMAND_PROP_NAME);
+
+        if (commandList != null) {
+            containerState.command = commandList.toArray(new String[0]);
+        }
+
+        String image = (String) config.get(DOCKER_CONTAINER_IMAGE_PROP_NAME);
+        if (image != null) {
+            containerState.image = image;
+        }
+
+        @SuppressWarnings(""unchecked"")
+        Collection<String> envList = (Collection<String>) config
+                .get(DOCKER_CONTAINER_ENV_PROP_NAME);
+        if (envList != null) {
+            containerState.env = envList.toArray(new String[0]);
+        }
+    }
+
+    /**
+     * Process network settings like port bindings, IP addresses, connected networks
+     *
+     * @param containerState
+     * @param networkSettings
+     *            the network settings that were returned by an inspect command
+     */
+    private static void mapNetworkSettingsProperties(ContainerState containerState,
+            Map<String, Object> networkSettings) {
+
+        mapPortBindingProperties(containerState, networkSettings);
+
+        mapNetworks(containerState,
+                getMap(networkSettings, DOCKER_CONTAINER_NETWORK_SETTINGS_NETWORKS_PROP_NAME));
+
+        /*
+         * related to https://bugzilla.eng.vmware.com/show_bug.cgi?id=1749340. The
+         * NetworkSettings.IPAddress is now deprecated in favor of the per-network defined addresses
+         * in NetworkSettings.Networks.<a-network>.IPAddress.
+         */
+        mapContainerIPAddress(containerState, networkSettings);
+    }
+
+    /**
+     * Process all networks a container is connected to
+     *
+     * @param containerState
+     * @param networks
+     *            the list of networks that was returned by an inspect command
+     */
+    private static void mapNetworks(ContainerState containerState, Map<String, Object> networks) {
+        if (containerState.networks == null) {
+            containerState.networks = new HashMap<>();
+        }
+
+        if (networks != null) {
+            networks.keySet()
+                    .forEach(networkName -> mapNetwork(containerState.networks, networkName,
+                            getMap(networks, networkName)));
+        }
+    }
+
+    /**
+     * Process a single network a container is connected to
+     *
+     * @param networks
+     *            the list of networks in a container state, usually retrieved by
+     *            <code>containerState.networks</code>
+     * @param networkName
+     *            the name of the network
+     * @param networkProps
+     *            the properties of this network that were returned by an inspect command
+     */
+    private static void mapNetwork(Map<String, ServiceNetwork> networks, String networkName,
+            Map<String, Object> networkProps) {
+
+        ServiceNetwork network = new ServiceNetwork();
+        List<Object> aliasesList = getList(networkProps,
+                DOCKER_CONTAINER_NETWORK_ALIASES_PROP_NAME);
+        List<Object> linksList = getList(networkProps,
+                DOCKER_CONTAINER_NETWORK_LINKS_PROP_NAME);
+
+        network.name = networkName;
+        network.aliases = aliasesList == null ? null : aliasesList.toArray(new String[0]);
+        network.links = linksList == null ? null : linksList.toArray(new String[0]);
+        network.ipv4_address = (String) networkProps
+                .get(DOCKER_CONTAINER_NETWORK_IPV4_ADDRESS_PROP_NAME);
+        network.ipv6_address = (String) networkProps
+                .get(DOCKER_CONTAINER_NETWORK_IPV6_ADDRESS_PROP_NAME);
+
+        networks.put(networkName, network);
+    }
+
+    /**
+     * Process port binding properties
+     *
+     * @param containerState
+     * @param networkSettings
+     */
+    private static void mapPortBindingProperties(ContainerState containerState,
+            Map<String, Object> networkSettings) {
+
+        if (networkSettings == null) {
+            return;
+        }
+
+        Map<String, List<Map<String, String>>> portMap = getMap(networkSettings,
+                DOCKER_CONTAINER_NETWORK_SETTINGS_PORTS_PROP_NAME);
+
+        if (containerState.ports == null) {
+            containerState.ports = new ArrayList<PortBinding>();
+        }
+        if (portMap != null) {
+            List<DockerPortMapping> portMappings = DockerPortMapping.fromMap(portMap);
+
+            containerState.ports = portMappings.stream()
+                    .map((m) -> PortBinding.fromDockerPortMapping(m))
+                    .collect(Collectors.toList());
+        }
+    }
+
+    /**
+     * Process the NetworkSettings.IpAddress
+     *
+     * @param containerState
+     * @param networkSettings
+     */
+    private static void mapContainerIPAddress(ContainerState containerState,
+            Map<String, Object> networkSettings) {
+
+        if (networkSettings == null) {
+            return;
+        }
+
+        Object ipAddress = networkSettings
+                .get(DOCKER_CONTAINER_NETWORK_SETTINGS_IP_ADDRESS_PROP_NAME);
+        if (ipAddress == null) {
+            return;
+        }
+
+        containerState.address = ipAddress.toString();
+    }
+
+    /*
+     * map the State.Running property to the PowerState enum
+     */
+    private static void mapPowerState(ContainerState containerState, Map<String, Object> state) {
+
+        if (ContainerState.CONTAINER_UNHEALTHY_STATUS.equals(containerState.status)) {
+            // do not modify the power state set during the health config check!
+            return;
+        }
+
+        Boolean isRunning = (Boolean) state
+                .get(DOCKER_CONTAINER_STATE_RUNNING_PROP_NAME);
+
+        if (isRunning.booleanValue()) {
+            containerState.powerState = PowerState.RUNNING;
+        } else {
+            containerState.powerState = PowerState.STOPPED;
+        }
+    }
+
+    private static <T> Map<String, T> getMap(Map<String, Object> container, String propertyName) {
+        @SuppressWarnings(""unchecked"")
+        Map<String, T> map = (Map<String, T>) container.get(propertyName);
+
+        return map;
+    }
+
+    private static <T> List<T> getList(Map<String, Object> container, String propertyName) {
+        @SuppressWarnings(""unchecked"")
+        List<T> list = (List<T>) container.get(propertyName);
+
+        return list;
+    }
+
+    /**
+     * Convert a string to a Date object
+     *
+     * @param value
+     * @return
+     */
+    public static Long parseDate(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        String str = (String) value;
+        try {
+            // docker uses RFC3339Nano date format
+            return Instant.parse(str).toEpochMilli();
+        } catch (DateTimeParseException e) {
+            // workaround for VIC host until https://github.com/vmware/vic/issues/1874 is fixed
+            if (str.length() == 0) {
+                return null;
+            }
+            SimpleDateFormat sdf = new SimpleDateFormat(""yyyy-MM-dd HH:mm:ss Z"");
+            try {
+                return sdf.parse(str).getTime();
+            } catch (ParseException e1) {
+                throw new LocalizableValidationException(e1, ""Invalid datetime '"" + str + ""'; ""
+                        + e1.getMessage(), ""adapter.container.mapper.invalid.date"", str);
+            }
+        }
+
+    }
+}
+","Assertion Roulette, General Fixture, Sensitive Equality, Lazy Test","The test code exhibits several code smells related to poor test design and maintenance.
+
+**Assertion Roulette:**  Multiple assertions in a test method without specific messages (e.g., `assertEquals()`, `assertTrue()` without explanations) make it difficult to diagnose failures.  If a test fails, it's unclear *which* assertion caused the problem, and debugging is much slower.  In the provided example, the `testParseDate` and `testPatchUnhealthyContainerState` tests are likely to have this issue but are not completely clear from the context.
+
+**General Fixture:** The `setUp` method initializes many fields that aren't used by all test methods. This is inefficient because setup work is repeated unnecessarily. This is evident in the complex setup methods but is not immediately apparent.
+
+**Sensitive Equality:** The tests use `toString()` for object comparisons.  If `toString()`'s implementation changes in the production code, the tests may fail unexpectedly, even if the actual object state hasn't changed.  This is particularly apparent in tests that compare container states.
+
+**Lazy Test:** Multiple tests invoke the same production method.  This suggests that the tests aren't sufficiently independent and may be accidentally testing the same behavior, but only on different data.
+
+
+**Concise explanation:** The tests lack proper test isolation and clarity.  They rely on shared setups, use error-prone comparisons, and lack meaningful assertion messages.  These weaknesses decrease test maintainability and the ability to quickly pinpoint failures.  The tests are more likely to break if the production code changes even without functional changes in the tested section, due to the mentioned smells.
+"
