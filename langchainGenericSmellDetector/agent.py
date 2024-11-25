@@ -1,5 +1,6 @@
 import os
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langchain.schema import HumanMessage, SystemMessage
 from dotenv import load_dotenv
 
@@ -20,6 +21,7 @@ class DetectedSmells(BaseModel):
 load_dotenv()
 
 openai_api_key = os.getenv("OPENAI_API_KEY")
+claude_api_key = os.getenv("CLAUDE_API_KEY")
 
 llm = ChatOpenAI(
     model="gpt-4o-mini",
@@ -40,7 +42,7 @@ def detectSmell(test_code: str, production_code: str) -> list[str]:
         HumanMessage("Here is the test code block:" + test_code + "Here is the production code block:" + production_code + "Can you tell which test smell(s) the test code block contains and why?"),
     ]
 
-    response = structured_llm.invoke(message)
+    response = structured_llm.invoke(message)    
     # print(response)
 
     # explanation_instructions = [
@@ -97,7 +99,10 @@ if __name__ == "__main__":
     """
     production_code = "not available"
 
-    res = detectSmell(test_code, production_code)
+    # res = detectSmell(test_code, production_code)
     
-    print(res.smellNames)
-    print(type(res.smellNames))
+    # print(res)
+    # print(type(res))
+    
+    print(claude_api_key)
+    print(openai_api_key)

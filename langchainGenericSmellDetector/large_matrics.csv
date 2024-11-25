@@ -1,0 +1,7 @@
+model_name,total_false_positive,total_false_negative,total_true_positive,total_true_negative
+gpt-4o,86,197,78,520
+claude-3.5-sonnet,64,214,61,546
+claude-3-5-haiku,49,217,58,529
+finetuned-lamma3.1-8b,144,92,50,647
+gemini-1.5-flash-8b,257,188,87,443
+gpt-4o-mini,632,131,144,269
