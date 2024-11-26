@@ -28,6 +28,18 @@ Our Fine Tuned Model is available at Hugging Face Model Hub. You can use it for 
 
 # Code Links:
 
+## Code extractor script from GitHub
+
+[Click Here](https://github.com/definecoder/LLM-Based-Test-Smell-Detection-Performance-Limitations-and-Prospects/blob/main/github_code_extractor/data_scraper.py)
+
+## Raw file extractor script
+
+[Click Here](https://github.com/definecoder/LLM-Based-Test-Smell-Detection-Performance-Limitations-and-Prospects/blob/main/github_code_extractor/raw_file_extractor.py)
+
+## Default Branch Mapper
+
+[Click Here](https://github.com/definecoder/LLM-Based-Test-Smell-Detection-Performance-Limitations-and-Prospects/blob/main/github_code_extractor/github_branch.py)
+
 ## Test Code Parser From Git Raw Link CSV:
 
 [Click Here](https://github.com/definecoder/LLM-Based-Test-Smell-Detection-Performance-Limitations-and-Prospects/blob/main/app.py)
